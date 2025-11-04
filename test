@@ -1,0 +1,11 @@
+The application is exposing an Apache Solr administration interface at http://host:8983/solr/. The Solr admin UI and API are accessible without authentication from the network, which discloses internal Solr information (cores, schemas, configurations, and indexed documents metadata). In an unsecured state, the Solr endpoint can be abused to read or modify indexed data, download configuration files, and in some deployments enable additional attack paths that lead to remote code execution or full data compromise.
+
+
+impact
+Attackers can enumerate cores, view schema/configuration details, and discover internal data structures or sensitive field names.
+
+recommedation:
+Configure Solr authentication and role-based authorization so only authorized accounts can access admin and core APIs.
+
+The Apache Solr Admin Interface Exposure vulnerability occurs when the Solr administrative panel (/solr/) or its API endpoints are accessible over the network without proper authentication or access control. This exposure allows unauthorized users to view configuration details, schemas, core information, and potentially sensitive indexed data. In some cases, attackers can also modify configurations or exploit additional Solr features to execute arbitrary commands on the server.
+
