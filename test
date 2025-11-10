@@ -9,3 +9,15 @@ Configure Solr authentication and role-based authorization so only authorized ac
 
 The Apache Solr Admin Interface Exposure vulnerability occurs when the Solr administrative panel (/solr/) or its API endpoints are accessible over the network without proper authentication or access control. This exposure allows unauthorized users to view configuration details, schemas, core information, and potentially sensitive indexed data. In some cases, attackers can also modify configurations or exploit additional Solr features to execute arbitrary commands on the server.
 
+SELECT 
+    U.USER_NAME,
+    E.EVENT_TYPE_NAME,
+    E.START_TIMESTAMP AS SESSION_START,
+    E.END_TIMESTAMP   AS SESSION_END,
+    E.CLIENT_HOST_NAME,
+    E.AUTHENTICATION_TYPE,
+    E.SESSION_ID
+FROM ADS_EVENT E
+JOIN ADS_USER U ON E.USER_ID = U.USER_ID
+WHERE E.EVENT_TYPE_ID IN (1001,1002)
+ORDER BY E.START_TIMESTAMP DESC;
