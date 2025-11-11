@@ -61,4 +61,30 @@ Matching Modules
    exploit/windows/http/sapdb_webtools                                      2007-07-05       great      SAP DB 7.4 WebTools Buffer Overflow
    exploit/windows/lpd/saplpd                                               2008-02-04       good       SAP SAPLPD 6.28 Buffer Overflow
    exploit/windows/misc/sap_2005_license                                    2009-08-01       great      SAP Business One License Manager 2005 Buffer Overflow
-   exploit/windows/misc/sap_netweaver_dispatcher                            2012-05-08       normal     SAP NetWeaver Dispatcher DiagTraceR3Info Buffer Overflow                   
+   exploit/windows/misc/sap_netweaver_dispatcher                            2012-05-08       normal     SAP NetWeaver Dispatcher DiagTraceR3Info Buffer Overflow  
+
+
+
+
+
+/sap/public/
+/sap/public/bc/its/mime/
+/sap/bc/gui/sap/its/webgui/
+/sap/bc/bsp/
+/sap/bc/ui5_ui5/
+/sap/bc/webdynpro/
+/sap/bc/soap/
+/sap/bc/srt/wsdl/
+/sap/bc/soap/rfc/
+/sap/bc/formats/xdp/
+/sap/hana/xs/
+/sap/hana/xs/wdisp/admin/
+/sap/hana/xs/admin/
+/sap/hana/xs/dt/base/
+/irj/portal/
+/nwa/
+/webdynpro/resources/
+/webdynpro/dispatcher/
+/configtool/
+/sld/
+/usr/sap/public/
