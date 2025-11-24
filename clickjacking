@@ -1,0 +1,9 @@
+<html>
+    <head>
+<h3>Application is Vulnerable to clickjacking</h3>
+        <title>Clickjack test page</title>
+    </head>
+    <body>
+        <iframe src="http://143.110.147.196:3000/" width="500" height="500"></iframe>
+    </body>
+</html>
