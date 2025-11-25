@@ -1,0 +1,4 @@
+ffuf 
+ffuf.exe -u https://host/fuzz -w word.txt -recursion -of html -o file.html
+
+ffuf -request req.txt -request-proto https -w word.txt -of html -o file.html
