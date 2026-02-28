@@ -17,3 +17,6 @@ The Apache Solr Admin Interface Exposure vulnerability occurs when the Solr admi
 
 
 The application does not invalidate user sessions after logout and does not enforce a session timeout. Active sessions remain valid and can be reused to access the application without re-authentication, increasing the risk of unauthorized access.
+Invalidate the user session immediately upon logout.
+
+Implement a session timeout to automatically expire inactive sessions.
