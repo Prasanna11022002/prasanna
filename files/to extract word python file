@@ -1,43 +1,18 @@
 import re
 
 INPUT_FILE = "response.txt"
-OUTPUT_FILE = "datasource_output.txt"
+OUTPUT_FILE = "datasources.txt"
 
-# 🔹 Italian → English dictionary
-translation_dict = {
-    "evento": "event",
-    "eventi": "events",
-    "partecipante": "participant",
-    "partecipanti": "participants",
-    "cliente": "customer",
-    "clienti": "customers",
-    "anagrafica": "profile",
-    "utente": "user",
-    "utenti": "users",
-    "documento": "document",
-    "documenti": "documents",
-    "pagamento": "payment",
-    "pagamenti": "payments",
-    "ordine": "order",
-    "ordini": "orders"
-}
-
-# 🔹 Extract DataSources
 def extract_datasources(text):
+    # Match words ending with DataSource (case-insensitive)
     pattern = r'\b[a-zA-Z]+datasource\b'
-    return list(set(re.findall(pattern, text, re.IGNORECASE)))
+    matches = re.findall(pattern, text, re.IGNORECASE)
+    
+    # Remove duplicates and normalize
+    unique = sorted(set(matches), key=str.lower)
+    return unique
 
-# 🔹 Get base word
-def get_base_word(ds_name):
-    match = re.match(r"(.*?)(datasource)", ds_name, re.IGNORECASE)
-    return match.group(1).lower() if match else ds_name.lower()
-
-# 🔹 Translate
-def translate(word):
-    return translation_dict.get(word, None)
-
-# 🔹 Main
-def process():
+def main():
     with open(INPUT_FILE, "r", encoding="utf-8") as f:
         content = f.read()
 
@@ -45,17 +20,9 @@ def process():
 
     with open(OUTPUT_FILE, "w", encoding="utf-8") as f:
         for ds in datasources:
-            base = get_base_word(ds)
-            english = translate(base)
+            f.write(ds + "\n")
 
-            if english:
-                eng_ds = english + "DataSource"
-            else:
-                eng_ds = "UNKNOWN"
-
-            f.write(f"{ds}  -->  {eng_ds}\n")
-
-    print(f"[+] Done! Results saved in {OUTPUT_FILE}")
+    print(f"[+] Extracted {len(datasources)} DataSources → saved to {OUTPUT_FILE}")
 
 if __name__ == "__main__":
-    process()
+    main()
