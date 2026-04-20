@@ -20,3 +20,31 @@ The application does not invalidate user sessions after logout and does not enfo
 Invalidate the user session immediately upon logout.
 
 Implement a session timeout to automatically expire inactive sessions.
+
+
+
+<!DOCTYPE html>
+<html lang="en-US">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width">
+    <title>Function library example</title>
+  <style>
+    input {
+      font-size: 2em;
+      margin: 10px 1px 0;
+    }
+  </style>
+  </head>
+<body>
+
+  <input class="numberInput" type="text">
+  <p></p>
+
+  <script>
+    const input = document.querySelector('.numberInput');
+    const para = document.querySelector('p');
+
+  </script>
+</body>
+</html>
