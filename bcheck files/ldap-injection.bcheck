@@ -1,0 +1,103 @@
+metadata:
+  language: v2-beta
+  name: "LDAP Injection"
+  description: "Detects LDAP injection vulnerabilities in input parameters"
+  author: "Custom BCheck"
+  tags: "injection", "ldap"
+
+define:
+  # LDAP injection payloads
+  ldap_payloads = [
+    "*",
+    "*)(&",
+    "*)(|(",
+    ")(cn=*",
+    "*()|%26'",
+    "*()|&'",
+    "*)(uid=*))(|(uid=*",
+    "*(|(mail=*))",
+    "*(|(objectclass=*))",
+    "*))%00",
+    "admin)(&(password=*))",
+    "*(objectClass=*)",
+    ")(!(objectClass=void",
+    "*)(password=*",
+    "admin*)((|userPassword=*)"
+  ]
+
+  # Error patterns that indicate LDAP injection
+  ldap_error_patterns = [
+    "LDAPException",
+    "LdapException",
+    "javax.naming.NamingException",
+    "com.sun.jndi.ldap",
+    "LDAP Error",
+    "ldap_bind",
+    "ldap_search",
+    "ldap_add",
+    "ldap_modify",
+    "ldap_delete",
+    "LDAPSearchResults",
+    "NamingException",
+    "javax.naming",
+    "Invalid DN",
+    "LDAP Result Code",
+    "org.springframework.ldap",
+    "ActiveDirectory",
+    "Active Directory"
+  ]
+
+given request then
+  # Test each parameter with LDAP injection payloads
+  for each payload of ldap_payloads:
+    send request called check:
+      appending queries: payload
+
+    if any ldap_error_patterns in {check.response.body} then
+      report issue:
+        severity: high
+        confidence: firm
+        detail: `LDAP Injection detected. Payload "{payload}" triggered an LDAP-related error response.`
+        remediation: "Sanitize and validate all user inputs before passing them to LDAP queries. Use parameterized LDAP queries or a safe LDAP library."
+    end if
+
+  end for
+
+
+given request then
+  # Test with blind LDAP injection - boolean-based detection
+  send request called original:
+    replacing body: ""
+
+  for each payload of ["*", ")(cn=*))(|(cn=*"]:
+    send request called injected:
+      appending queries: payload
+
+    # Look for significant response differences (blind detection)
+    if {injected.response.status_code} is "200" and
+       {original.response.status_code} is not "200" then
+      report issue:
+        severity: high
+        confidence: tentative
+        detail: `Possible Blind LDAP Injection. Payload "{payload}" caused a different HTTP response code, suggesting the application may be vulnerable.`
+        remediation: "Sanitize and validate all user inputs. Avoid constructing LDAP queries with raw user input."
+    end if
+  end for
+
+
+given request then
+  # Check for LDAP injection in header values
+  for each payload of ["*", "*)(uid=*))(|(uid=*"]:
+    send request called header_check:
+      replacing header "User-Agent": `Mozilla/5.0 {payload}`
+      replacing header "X-Forwarded-For": payload
+      replacing header "Referer": payload
+
+    if any ldap_error_patterns in {header_check.response.body} then
+      report issue:
+        severity: high
+        confidence: firm
+        detail: `LDAP Injection detected via HTTP header. Payload "{payload}" triggered an LDAP-related error.`
+        remediation: "Sanitize inputs from all sources including HTTP headers before using them in LDAP queries."
+    end if
+  end for

