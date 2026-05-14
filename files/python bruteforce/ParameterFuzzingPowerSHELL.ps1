@@ -1,4 +1,4 @@
-# Parameter Fuzzer - PowerShell Version
+# Parameter Fuzzer - PowerShell Version (FULLY FIXED)
 # Usage: .\param_fuzzer.ps1 -URL "https://example.com/page?id=FUZZ" -Wordlist "wordlist.txt"
 
 param(
@@ -14,7 +14,13 @@ param(
     [string]$Method = "GET"
 )
 
-# Classes and Functions
+# Create results directory
+$reportsDir = "FuzzerReports"
+if (-not (Test-Path $reportsDir)) {
+    New-Item -ItemType Directory -Path $reportsDir | Out-Null
+    Write-Host "[+] Created reports directory: $reportsDir" -ForegroundColor Green
+}
+
 class FuzzResult {
     [string]$ParameterValue
     [string]$Url
@@ -25,8 +31,6 @@ class FuzzResult {
     [string]$Redirect
     [string]$Server
     [string]$Title
-    [int]$Words
-    [int]$Lines
 }
 
 class ParameterFuzzer {
@@ -36,17 +40,23 @@ class ParameterFuzzer {
     [double]$Delay
     [string]$Method
     [string]$ParamName
-    [System.Collections.ArrayList]$FoundResults
+    [System.Collections.ArrayList]$AllResults
+    [System.Collections.ArrayList]$InterestingResults
     [datetime]$StartTime
     [hashtable]$Headers
+    [string]$ReportsDir
+    [int]$TotalTested
     
-    ParameterFuzzer([string]$url, [string]$wordlist, [int]$threads, [double]$delay, [string]$method, [string]$param) {
+    ParameterFuzzer([string]$url, [string]$wordlist, [int]$threads, [double]$delay, [string]$method, [string]$param, [string]$reportsDir) {
         $this.BaseUrl = $url.TrimEnd('/')
         $this.WordlistFile = $wordlist
         $this.Threads = $threads
         $this.Delay = $delay
         $this.Method = $method.ToUpper()
-        $this.FoundResults = [System.Collections.ArrayList]@()
+        $this.AllResults = [System.Collections.ArrayList]@()
+        $this.InterestingResults = [System.Collections.ArrayList]@()
+        $this.ReportsDir = $reportsDir
+        $this.TotalTested = 0
         
         $this.Headers = @{
             'User-Agent' = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
@@ -64,7 +74,6 @@ class ParameterFuzzer {
             return 'FUZZ'
         }
         
-        # Try to extract from URL
         if ($this.BaseUrl -match '\?(.+?)=') {
             return $matches[1]
         }
@@ -93,6 +102,8 @@ class ParameterFuzzer {
             return
         }
         
+        $this.TotalTested++
+        
         if ($this.Delay -gt 0) {
             Start-Sleep -Milliseconds ($this.Delay * 1000)
         }
@@ -102,62 +113,109 @@ class ParameterFuzzer {
         try {
             $stopwatch = [System.Diagnostics.Stopwatch]::StartNew()
             
-            if ($this.Method -eq 'GET') {
-                $response = Invoke-WebRequest -Uri $url -Headers $this.Headers -TimeoutSec 10 -SkipHttpErrorCheck
-            } elseif ($this.Method -eq 'POST') {
-                $body = @{ $this.ParamName = $word }
-                $response = Invoke-WebRequest -Uri $url -Method POST -Body $body -Headers $this.Headers -TimeoutSec 10 -SkipHttpErrorCheck
-            } else {
-                $response = Invoke-WebRequest -Uri $url -Method $this.Method -Headers $this.Headers -TimeoutSec 10 -SkipHttpErrorCheck
+            # Suppress SSL errors
+            [System.Net.ServicePointManager]::SecurityProtocol = [System.Net.ServicePointManager]::SecurityProtocol -bor [System.Net.SecurityProtocolType]::Tls12
+            
+            $response = $null
+            $statusCode = 0
+            $size = 0
+            $contentType = "N/A"
+            $redirect = ""
+            $server = "N/A"
+            $title = "N/A"
+            
+            try {
+                if ($this.Method -eq 'GET') {
+                    # PS 5.1 compatible - catch all errors
+                    $response = Invoke-WebRequest -Uri $url -Headers $this.Headers -TimeoutSec 10 -ErrorAction Continue
+                } else {
+                    $response = Invoke-WebRequest -Uri $url -Method $this.Method -Headers $this.Headers -TimeoutSec 10 -ErrorAction Continue
+                }
+                
+                if ($response) {
+                    $statusCode = $response.StatusCode
+                    $size = $response.RawContentLength
+                    if ($null -eq $size) {
+                        $size = $response.Content.Length
+                    }
+                    $contentType = $response.Headers['Content-Type'] -join ', '
+                    $redirect = $response.Headers['Location'] -join ', '
+                    $server = $response.Headers['Server'] -join ', '
+                    $title = $this.ExtractTitle($response.Content)
+                }
+                
+            } catch {
+                # Extract status code from error if available
+                if ($_.Exception.Response) {
+                    $statusCode = [int]$_.Exception.Response.StatusCode
+                    $size = $_.Exception.Response.ContentLength
+                    if ($null -eq $size -or $size -lt 0) {
+                        $size = 0
+                    }
+                    $contentType = $_.Exception.Response.Headers['Content-Type'] -join ', '
+                    $redirect = $_.Exception.Response.Headers['Location'] -join ', '
+                    $server = $_.Exception.Response.Headers['Server'] -join ', '
+                } else {
+                    $statusCode = 0
+                    $size = 0
+                }
             }
             
             $stopwatch.Stop()
             $responseTime = $stopwatch.Elapsed.TotalMilliseconds
             
-            $status = $response.StatusCode
-            $size = $response.RawContentLength
-            $contentType = $response.Headers['Content-Type'] -join ', '
+            # Save ALL results
+            $result = [FuzzResult]@{
+                ParameterValue = $word
+                Url = $url
+                Status = $statusCode
+                Size = $size
+                ContentType = $contentType
+                ResponseTime = [Math]::Round($responseTime, 2)
+                Redirect = $redirect
+                Server = $server
+                Title = $title
+            }
             
-            if ($this.IsInteresting($status, $size)) {
-                $color = $this.GetColor($status)
-                
-                Write-Host "[+] [$status] Size: $($size.ToString().PadLeft(7)) | $word -> $($url.Substring(0, [Math]::Min(80, $url.Length)))" -ForegroundColor $color
-                
-                $title = $this.ExtractTitle($response.Content)
-                $words = $response.Content.Split([Environment]::NewLine).Count
-                $lines = ($response.Content -split '\n').Count
-                
-                $result = [FuzzResult]@{
-                    ParameterValue = $word
-                    Url = $url
-                    Status = $status
-                    Size = $size
-                    ContentType = $contentType
-                    ResponseTime = [Math]::Round($responseTime, 2)
-                    Redirect = $response.Headers['Location'] -join ', '
-                    Server = $response.Headers['Server'] -join ', '
-                    Title = $title
-                    Words = $words
-                    Lines = $lines
-                }
-                
-                $this.FoundResults.Add($result) | Out-Null
+            $this.AllResults.Add($result) | Out-Null
+            
+            # Check if interesting
+            if ($this.IsInteresting($statusCode, $size)) {
+                $color = $this.GetColor($statusCode)
+                Write-Host "[+] [$statusCode] Size: $($size.ToString().PadLeft(7)) | $word" -ForegroundColor $color
+                $this.InterestingResults.Add($result) | Out-Null
+            } else {
+                Write-Host "[-] [$statusCode] Size: $($size.ToString().PadLeft(7)) | $word" -ForegroundColor Gray
             }
             
         } catch {
-            # Silently handle errors
+            Write-Host "[!] Error testing '$word' : $($_.Exception.Message)" -ForegroundColor Red
+            
+            # Still add as failed result
+            $result = [FuzzResult]@{
+                ParameterValue = $word
+                Url = $url
+                Status = 0
+                Size = 0
+                ContentType = "ERROR"
+                ResponseTime = 0
+                Redirect = ""
+                Server = "N/A"
+                Title = "Connection Error"
+            }
+            
+            $this.AllResults.Add($result) | Out-Null
         }
     }
     
     [bool]IsInteresting([int]$status, [long]$size) {
-        if ($status -in 200, 201, 204, 301, 302, 307, 308, 401, 403, 500, 502, 503) {
+        # Interesting responses
+        if ($status -in 200, 201, 204, 301, 302, 307, 308, 401, 403) {
             return $true
         }
-        
         if ($size -gt 1000) {
             return $true
         }
-        
         return $false
     }
     
@@ -171,19 +229,41 @@ class ParameterFuzzer {
                 return $title
             }
         } catch {
-            # Ignore errors
+            # Ignore
         }
         return 'N/A'
     }
     
     [string]GetColor([int]$status) {
-        switch ($status) {
-            {$_ -eq 200} { return 'Green' }
-            {$_ -in 301, 302, 307, 308} { return 'Yellow' }
-            {$_ -in 401, 403} { return 'Cyan' }
-            {$_ -ge 500} { return 'Red' }
-            default { return 'White' }
+        if ($status -eq 200 -or $status -eq 201) {
+            return 'Green'
         }
+        if ($status -eq 301 -or $status -eq 302) {
+            return 'Yellow'
+        }
+        if ($status -eq 401 -or $status -eq 403) {
+            return 'Cyan'
+        }
+        if ($status -eq 0) {
+            return 'Red'
+        }
+        return 'White'
+    }
+    
+    [string]GetStatusColor([int]$status) {
+        if ($status -in 200, 201, 204) {
+            return '#d4edda'
+        }
+        if ($status -in 301, 302, 307, 308) {
+            return '#fff3cd'
+        }
+        if ($status -in 401, 403) {
+            return '#cce5ff'
+        }
+        if ($status -eq 0) {
+            return '#f8d7da'
+        }
+        return '#e2e3e5'
     }
     
     [void]Run() {
@@ -194,27 +274,34 @@ class ParameterFuzzer {
         
         $words = @(Get-Content $this.WordlistFile | Where-Object { $_ -and -not $_.StartsWith('#') })
         
+        if ($words.Count -eq 0) {
+            Write-Host "[ERROR] No words found in wordlist!" -ForegroundColor Red
+            return
+        }
+        
         Write-Host ""
         Write-Host "=" * 70 -ForegroundColor Cyan
         Write-Host "[*] Target: $($this.BaseUrl)" -ForegroundColor Cyan
         Write-Host "[*] Parameter: $($this.ParamName)" -ForegroundColor Cyan
         Write-Host "[*] Wordlist: $($this.WordlistFile) ($($words.Count) values)" -ForegroundColor Cyan
-        Write-Host "[*] Threads: $($this.Threads)" -ForegroundColor Cyan
         Write-Host "[*] Method: $($this.Method)" -ForegroundColor Cyan
+        Write-Host "[*] Reports Dir: $($this.ReportsDir)" -ForegroundColor Cyan
         Write-Host "=" * 70 -ForegroundColor Cyan
         Write-Host ""
         
         $this.StartTime = Get-Date
         $stopwatch = [System.Diagnostics.Stopwatch]::StartNew()
         
-        # Create scriptblock for parallel execution
-        $scriptblock = {
-            param($fuzzer, $word)
-            $fuzzer.TestParameter($word)
+        # Process each word
+        $count = 0
+        foreach ($word in $words) {
+            $this.TestParameter($word)
+            $count++
+            
+            if ($count % 5 -eq 0) {
+                Write-Host "[*] Progress: $count/$($words.Count)" -ForegroundColor Gray
+            }
         }
-        
-        # Run fuzzing
-        $words | ForEach-Object -Parallel $scriptblock -ArgumentList $this, $_ -ThrottleLimit $this.Threads
         
         $stopwatch.Stop()
         $elapsed = $stopwatch.Elapsed.TotalSeconds
@@ -222,70 +309,97 @@ class ParameterFuzzer {
         Write-Host ""
         Write-Host "=" * 70 -ForegroundColor Cyan
         Write-Host "[*] Finished in $([Math]::Round($elapsed, 2)) seconds" -ForegroundColor Cyan
-        Write-Host "[*] Found $($this.FoundResults.Count) interesting responses" -ForegroundColor Cyan
+        Write-Host "[*] Total tested: $($this.TotalTested)" -ForegroundColor Cyan
+        Write-Host "[*] Interesting: $($this.InterestingResults.Count)" -ForegroundColor Cyan
         Write-Host "=" * 70 -ForegroundColor Cyan
         Write-Host ""
         
-        $this.SaveHtmlReport($elapsed, $words.Count)
+        # Save reports
+        $this.SaveAllResultsHtml($elapsed, $words.Count)
+        $this.SaveInterestingResultsHtml($elapsed)
         $this.SaveTextReport()
     }
     
-    [void]SaveHtmlReport([double]$elapsedTime, [int]$totalWords) {
+    [void]SaveAllResultsHtml([double]$elapsedTime, [int]$totalWords) {
         $timestamp = Get-Date -Format "yyyyMMdd_HHmmss"
-        $filename = "parameter_fuzz_report_$timestamp.html"
+        $filename = "$($this.ReportsDir)\all_results_$timestamp.html"
         
-        $sortedResults = $this.FoundResults | Sort-Object { $_.Status }, { -$_.Size }
-        
-        $statusCounts = @{}
-        foreach ($result in $this.FoundResults) {
-            $status = [string]$result.Status
-            if (-not $statusCounts.ContainsKey($status)) {
-                $statusCounts[$status] = 0
-            }
-            $statusCounts[$status]++
-        }
+        $sortedResults = $this.AllResults | Sort-Object { $_.Status }, { -$_.Size }
         
         $tableRows = ""
         $idx = 1
         
-        if ($this.FoundResults.Count -eq 0) {
-            $tableRows = '<tr><td colspan="9" style="text-align: center; padding: 50px; color: #999;">No interesting results found</td></tr>'
+        foreach ($result in $sortedResults) {
+            $status = [string]$result.Status
+            $statusColor = $this.GetStatusColor($result.Status)
+            $sizeFormatted = if ($result.Size -gt 0) { "$($result.Size.ToString('N0')) bytes" } else { "0 bytes" }
+            
+            $tableRows += @"
+            <tr>
+                <td>$idx</td>
+                <td><span class="status-badge" style="background-color: $statusColor;">$status</span></td>
+                <td><span class="param-value">$($result.ParameterValue)</span></td>
+                <td class="size">$sizeFormatted</td>
+                <td class="response-time">$($result.ResponseTime) ms</td>
+                <td>$($result.ContentType.Substring(0, [Math]::Min(40, $result.ContentType.Length)))</td>
+                <td><a href="$($result.Url)" target="_blank" class="url-link">$($result.Url.Substring(0, [Math]::Min(60, $result.Url.Length)))...</a></td>
+            </tr>
+"@
+            $idx++
+        }
+        
+        $htmlContent = $this.GenerateHtmlTemplate("ALL RESULTS", $sortedResults.Count, $this.TotalTested, $elapsedTime, $tableRows)
+        $htmlContent | Out-File -FilePath $filename -Encoding UTF8 -Force
+        Write-Host "[+] ALL RESULTS saved to: $filename" -ForegroundColor Green
+    }
+    
+    [void]SaveInterestingResultsHtml([double]$elapsedTime) {
+        $timestamp = Get-Date -Format "yyyyMMdd_HHmmss"
+        $filename = "$($this.ReportsDir)\interesting_results_$timestamp.html"
+        
+        $sortedResults = $this.InterestingResults | Sort-Object { $_.Status }, { -$_.Size }
+        
+        $tableRows = ""
+        $idx = 1
+        
+        if ($this.InterestingResults.Count -eq 0) {
+            $tableRows = '<tr><td colspan="7" style="text-align: center; padding: 50px; color: #999;">No interesting results found</td></tr>'
         } else {
             foreach ($result in $sortedResults) {
                 $status = [string]$result.Status
-                $redirectInfo = if ($result.Redirect) { " → $($result.Redirect.Substring(0, [Math]::Min(30, $result.Redirect.Length)))..." } else { "" }
+                $statusColor = $this.GetStatusColor($result.Status)
+                $sizeFormatted = if ($result.Size -gt 0) { "$($result.Size.ToString('N0')) bytes" } else { "0 bytes" }
                 
                 $tableRows += @"
             <tr>
                 <td>$idx</td>
-                <td><span class="status-badge status-$status">$status</span></td>
+                <td><span class="status-badge" style="background-color: $statusColor;">$status</span></td>
                 <td><span class="param-value">$($result.ParameterValue)</span></td>
-                <td class="size">$($result.Size.ToString('N0')) bytes</td>
-                <td>$($result.Words)</td>
-                <td>$($result.Lines)</td>
+                <td class="size">$sizeFormatted</td>
                 <td class="response-time">$($result.ResponseTime) ms</td>
-                <td>$($result.Title.Substring(0, [Math]::Min(50, $result.Title.Length)))</td>
-                <td><a href="$($result.Url)" target="_blank" class="url-link">$($result.Url.Substring(0, [Math]::Min(60, $result.Url.Length)))...</a>$redirectInfo</td>
+                <td>$($result.ContentType.Substring(0, [Math]::Min(40, $result.ContentType.Length)))</td>
+                <td><a href="$($result.Url)" target="_blank" class="url-link">$($result.Url.Substring(0, [Math]::Min(60, $result.Url.Length)))...</a></td>
             </tr>
 "@
                 $idx++
             }
         }
         
-        $statusOptions = ""
-        foreach ($status in ($statusCounts.Keys | Sort-Object)) {
-            $statusOptions += "<option value=`"$status`">$status ($($statusCounts[$status]))</option>`n"
-        }
+        $htmlContent = $this.GenerateHtmlTemplate("INTERESTING RESULTS", $this.InterestingResults.Count, $this.TotalTested, $elapsedTime, $tableRows)
+        $htmlContent | Out-File -FilePath $filename -Encoding UTF8 -Force
+        Write-Host "[+] INTERESTING RESULTS saved to: $filename" -ForegroundColor Green
+    }
+    
+    [string]GenerateHtmlTemplate([string]$title, [int]$found, [int]$total, [double]$elapsed, [string]$tableRows) {
+        $hitRate = if ($total -gt 0) { [Math]::Round(($found / $total * 100), 1) } else { 0 }
         
-        $hitRate = if ($totalWords -gt 0) { [Math]::Round(($this.FoundResults.Count / $totalWords * 100), 1) } else { 0 }
-        
-        $htmlContent = @"
+        return @"
 <!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Parameter Fuzzing Report - $($this.ParamName)</title>
+    <title>Parameter Fuzzing - $title</title>
     <style>
         * {
             margin: 0;
@@ -322,19 +436,13 @@ class ParameterFuzzer {
         }
         
         .header .url {
-            font-size: 1.2em;
+            font-size: 1.1em;
             opacity: 0.9;
             margin: 10px 0;
             word-break: break-all;
             background: rgba(255,255,255,0.1);
             padding: 10px;
             border-radius: 5px;
-        }
-        
-        .header .param {
-            font-size: 1em;
-            opacity: 0.8;
-            margin-top: 10px;
         }
         
         .stats {
@@ -351,6 +459,7 @@ class ParameterFuzzer {
             border-radius: 8px;
             box-shadow: 0 2px 10px rgba(0,0,0,0.1);
             text-align: center;
+            border-left: 5px solid #667eea;
         }
         
         .stat-card h3 {
@@ -361,7 +470,7 @@ class ParameterFuzzer {
         }
         
         .stat-card .value {
-            font-size: 2em;
+            font-size: 2.5em;
             font-weight: bold;
             color: #667eea;
         }
@@ -373,7 +482,6 @@ class ParameterFuzzer {
             display: flex;
             gap: 15px;
             flex-wrap: wrap;
-            align-items: center;
         }
         
         .filters input {
@@ -385,12 +493,8 @@ class ParameterFuzzer {
             min-width: 200px;
         }
         
-        .filters select {
-            padding: 10px 15px;
-            border: 2px solid #ddd;
-            border-radius: 5px;
-            font-size: 1em;
-            cursor: pointer;
+        .table-wrapper {
+            overflow-x: auto;
         }
         
         table {
@@ -410,12 +514,6 @@ class ParameterFuzzer {
             font-weight: 600;
             color: #555;
             border-bottom: 2px solid #ddd;
-            cursor: pointer;
-            user-select: none;
-        }
-        
-        th:hover {
-            background: #e9ecef;
         }
         
         td {
@@ -433,23 +531,10 @@ class ParameterFuzzer {
             font-weight: bold;
             font-size: 0.85em;
             display: inline-block;
-            min-width: 60px;
+            min-width: 50px;
             text-align: center;
+            color: #333;
         }
-        
-        .status-200 { background: #d4edda; color: #155724; }
-        .status-201 { background: #d4edda; color: #155724; }
-        .status-204 { background: #d4edda; color: #155724; }
-        .status-301 { background: #fff3cd; color: #856404; }
-        .status-302 { background: #fff3cd; color: #856404; }
-        .status-307 { background: #fff3cd; color: #856404; }
-        .status-308 { background: #fff3cd; color: #856404; }
-        .status-401 { background: #cce5ff; color: #004085; }
-        .status-403 { background: #cce5ff; color: #004085; }
-        .status-405 { background: #e2e3e5; color: #383d41; }
-        .status-500 { background: #f8d7da; color: #721c24; }
-        .status-502 { background: #f8d7da; color: #721c24; }
-        .status-503 { background: #f8d7da; color: #721c24; }
         
         .url-link {
             color: #667eea;
@@ -473,6 +558,7 @@ class ParameterFuzzer {
         .size {
             color: #666;
             font-family: monospace;
+            font-weight: 500;
         }
         
         .response-time {
@@ -486,6 +572,7 @@ class ParameterFuzzer {
             background: #f8f9fa;
             color: #666;
             font-size: 0.9em;
+            border-top: 2px solid #f0f0f0;
         }
     </style>
 </head>
@@ -493,8 +580,11 @@ class ParameterFuzzer {
     <div class="container">
         <div class="header">
             <h1>🎯 Parameter Fuzzing Report</h1>
-            <div class="url">$($this.BaseUrl)</div>
-            <div class="param">Fuzzing Parameter: <strong>$($this.ParamName)</strong></div>
+            <h2 style="font-size: 1.3em; margin-bottom: 15px;">$title</h2>
+            <div class="url">
+                <strong>Target:</strong> $($this.BaseUrl)<br>
+                <strong>Parameter:</strong> $($this.ParamName)
+            </div>
             <p style="font-size: 0.9em; margin-top: 10px;">
                 Scan Date: $($this.StartTime.ToString('yyyy-MM-dd HH:mm:ss'))
             </p>
@@ -502,16 +592,16 @@ class ParameterFuzzer {
         
         <div class="stats">
             <div class="stat-card">
-                <h3>Interesting Results</h3>
-                <div class="value">$($this.FoundResults.Count)</div>
+                <h3>Results Found</h3>
+                <div class="value">$found</div>
             </div>
             <div class="stat-card">
-                <h3>Total Values Tested</h3>
-                <div class="value">$totalWords</div>
+                <h3>Total Tested</h3>
+                <div class="value">$total</div>
             </div>
             <div class="stat-card">
                 <h3>Scan Duration</h3>
-                <div class="value">$([Math]::Round($elapsedTime, 2))s</div>
+                <div class="value">$([Math]::Round($elapsed, 2))s</div>
             </div>
             <div class="stat-card">
                 <h3>Hit Rate</h3>
@@ -520,26 +610,20 @@ class ParameterFuzzer {
         </div>
         
         <div class="filters">
-            <input type="text" id="searchInput" placeholder="🔍 Search parameter values..." onkeyup="filterTable()">
-            <select id="statusFilter" onchange="filterTable()">
-                <option value="">All Status Codes</option>
-                $statusOptions
-            </select>
+            <input type="text" id="searchInput" placeholder="🔍 Search parameter values or URLs..." onkeyup="filterTable()">
         </div>
         
-        <div style="overflow-x: auto;">
+        <div class="table-wrapper">
             <table id="resultsTable">
                 <thead>
                     <tr>
-                        <th onclick="sortTable(0)">#</th>
-                        <th onclick="sortTable(1)">Status ▼</th>
-                        <th onclick="sortTable(2)">Parameter Value</th>
-                        <th onclick="sortTable(3)">Size</th>
-                        <th onclick="sortTable(4)">Words</th>
-                        <th onclick="sortTable(5)">Lines</th>
-                        <th onclick="sortTable(6)">Response Time</th>
-                        <th onclick="sortTable(7)">Title</th>
-                        <th onclick="sortTable(8)">URL</th>
+                        <th>#</th>
+                        <th>Status Code</th>
+                        <th>Parameter</th>
+                        <th>Size</th>
+                        <th>Response Time</th>
+                        <th>Content-Type</th>
+                        <th>URL</th>
                     </tr>
                 </thead>
                 <tbody>
@@ -549,76 +633,25 @@ class ParameterFuzzer {
         </div>
         
         <div class="footer">
-            <p>Generated by Parameter Fuzzer (PowerShell) | Method: $($this.Method) | Threads: $($this.Threads)</p>
+            <p>Generated by PowerShell Parameter Fuzzer | Method: $($this.Method)</p>
         </div>
     </div>
     
     <script>
         function filterTable() {
             let searchInput = document.getElementById('searchInput').value.toLowerCase();
-            let statusFilter = document.getElementById('statusFilter').value;
             let table = document.getElementById('resultsTable');
             let tr = table.getElementsByTagName('tr');
             
             for (let i = 1; i < tr.length; i++) {
                 let td = tr[i].getElementsByTagName('td');
                 let paramValue = td[2].textContent.toLowerCase();
-                let status = td[1].textContent.trim();
+                let url = td[6].textContent.toLowerCase();
                 
-                let matchSearch = paramValue.includes(searchInput);
-                let matchStatus = statusFilter === '' || status === statusFilter;
-                
-                if (matchSearch && matchStatus) {
+                if (paramValue.includes(searchInput) || url.includes(searchInput)) {
                     tr[i].style.display = '';
                 } else {
                     tr[i].style.display = 'none';
-                }
-            }
-        }
-        
-        function sortTable(n) {
-            let table = document.getElementById('resultsTable');
-            let switching = true;
-            let dir = 'asc';
-            let switchcount = 0;
-            
-            while (switching) {
-                switching = false;
-                let rows = table.rows;
-                
-                for (let i = 1; i < (rows.length - 1); i++) {
-                    let shouldSwitch = false;
-                    let x = rows[i].getElementsByTagName('TD')[n];
-                    let y = rows[i + 1].getElementsByTagName('TD')[n];
-                    
-                    let xContent = x.innerHTML.replace(/<[^>]*>/g, '');
-                    let yContent = y.innerHTML.replace(/<[^>]*>/g, '');
-                    
-                    xContent = isNaN(xContent) ? xContent.toLowerCase() : parseFloat(xContent.replace(/[^0-9.]/g, ''));
-                    yContent = isNaN(yContent) ? yContent.toLowerCase() : parseFloat(yContent.replace(/[^0-9.]/g, ''));
-                    
-                    if (dir == 'asc') {
-                        if (xContent > yContent) {
-                            shouldSwitch = true;
-                            break;
-                        }
-                    } else if (dir == 'desc') {
-                        if (xContent < yContent) {
-                            shouldSwitch = true;
-                            break;
-                        }
-                    }
-                }
-                
-                if (shouldSwitch) {
-                    rows[i].parentNode.insertBefore(rows[i + 1], rows[i]);
-                    switching = true;
-                    switchcount++;
-                } else {
-                    if (switchcount == 0 && dir == 'asc') {
-                        dir = 'desc';
-                        switching = true;
-                    }
                 }
             }
         }
@@ -626,37 +659,50 @@ class ParameterFuzzer {
 </body>
 </html>
 "@
-        
-        $htmlContent | Out-File -FilePath $filename -Encoding UTF8
-        Write-Host "[+] HTML report saved to '$filename'" -ForegroundColor Green
     }
     
     [void]SaveTextReport() {
         $timestamp = Get-Date -Format "yyyyMMdd_HHmmss"
-        $filename = "parameter_fuzz_$timestamp.txt"
+        $filename = "$($this.ReportsDir)\summary_$timestamp.txt"
         
         $content = @"
-Parameter Fuzzing Report
-Target: $($this.BaseUrl)
+=================================================================
+PARAMETER FUZZING REPORT SUMMARY
+=================================================================
+
+Target URL: $($this.BaseUrl)
 Parameter: $($this.ParamName)
-Date: $($this.StartTime.ToString('yyyy-MM-dd HH:mm:ss'))
-$('=' * 70)
+Scan Date: $($this.StartTime.ToString('yyyy-MM-dd HH:mm:ss'))
 
+STATISTICS:
+-----------
+Total Parameters Tested: $($this.TotalTested)
+Interesting Results: $($this.InterestingResults.Count)
+All Results Logged: $($this.AllResults.Count)
+
+INTERESTING RESULTS:
+---------------------
 "@
         
-        $sortedResults = $this.FoundResults | Sort-Object { $_.Status }, { -$_.Size }
-        
-        foreach ($result in $sortedResults) {
-            $content += @"
-[$($result.Status)] $($result.ParameterValue) -> $($result.Url)
-    Size: $($result.Size) bytes | Words: $($result.Words) | Time: $($result.ResponseTime)ms
-    Title: $($result.Title)
-
-"@
+        if ($this.InterestingResults.Count -gt 0) {
+            foreach ($result in $this.InterestingResults) {
+                $content += "[$($result.Status)] $($result.ParameterValue) - $($result.Url) ($($result.Size) bytes)`r`n"
+            }
+        } else {
+            $content += "No interesting results found`r`n"
         }
         
-        $content | Out-File -FilePath $filename -Encoding UTF8
-        Write-Host "[+] Text report saved to '$filename'" -ForegroundColor Green
+        $content += @"
+
+=================================================================
+For detailed results, see:
+- all_results_$timestamp.html (ALL requests)
+- interesting_results_$timestamp.html (Only interesting responses)
+=================================================================
+"@
+        
+        $content | Out-File -FilePath $filename -Encoding UTF8 -Force
+        Write-Host "[+] Summary saved to: $filename" -ForegroundColor Green
     }
 }
 
@@ -665,11 +711,17 @@ try {
     Write-Host ""
     Write-Host "PowerShell Parameter Fuzzer" -ForegroundColor Cyan
     Write-Host "===========================" -ForegroundColor Cyan
+    Write-Host ""
     
-    $fuzzer = [ParameterFuzzer]::new($URL, $Wordlist, $Threads, $Delay, $Method, $Parameter)
+    $fuzzer = [ParameterFuzzer]::new($URL, $Wordlist, $Threads, $Delay, $Method, $Parameter, $reportsDir)
     $fuzzer.Run()
+    
+    Write-Host ""
+    Write-Host "All reports saved in: $(Resolve-Path $reportsDir)" -ForegroundColor Green
+    Write-Host ""
     
 } catch {
     Write-Host "[ERROR] $($_.Exception.Message)" -ForegroundColor Red
+    Write-Host "[TRACE] $($_.Exception.StackTrace)" -ForegroundColor Red
     exit 1
 }
