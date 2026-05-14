@@ -1,0 +1,27 @@
+# Method 1: Using FUZZ keyword
+python param_fuzzer.py -u "https://example.com/page?id=FUZZ" -w wordlist.txt
+
+# Method 2: Using parameter name
+python param_fuzzer.py -u "https://example.com/page?id=" -w wordlist.txt -p id
+
+# Method 3: Auto-detect (will use 'id' as default)
+python param_fuzzer.py -u "https://example.com/page" -w wordlist.txt -p id
+
+# With threads and delay
+python param_fuzzer.py -u "https://example.com/api?user=FUZZ" -w users.txt -t 20 -d 0.05
+
+# POST method
+python param_fuzzer.py -u "https://example.com/search" -w search_terms.txt -p q -m POST
+
+
+# Basic scan
+python fuzzer.py -u http://example.com -w wordlist.txt
+
+# With file extensions
+python fuzzer.py -u http://example.com -w wordlist.txt -e php,html,txt,json
+
+# With 20 threads and delay
+python fuzzer.py -u https://api.example.com -w api-wordlist.txt -t 20 -d 0.05
+
+# POST method
+python fuzzer.py -u http://example.com -w wordlist.txt -m POST
