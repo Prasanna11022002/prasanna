@@ -1,0 +1,346 @@
+from burp import IBurpExtender, ISessionHandlingAction, IExtensionHelpers
+from java.io import PrintWriter
+import json
+import re
+import time
+
+class BurpExtender(IBurpExtender, ISessionHandlingAction):
+
+    def registerExtenderCallbacks(self, callbacks):
+        self._callbacks = callbacks
+        self._helpers   = callbacks.getHelpers()
+        self._stdout    = PrintWriter(callbacks.getStdout(), True)
+        self._stderr    = PrintWriter(callbacks.getStderr(), True)
+
+        callbacks.setExtensionName("SSO → JSESSIONID → JWT Auto Refresher")
+        callbacks.registerSessionHandlingAction(self)
+
+        # ================================================================
+        # CONFIGURE THESE VALUES
+        # ================================================================
+
+        # Step 1a — SSO endpoint (returns 302 with Location header)
+        self.sso_url     = "https://your-sso-domain.com/auth/realms/xxx/protocol/openid-connect/auth"
+        self.sso_method  = "GET"   # or POST depending on your SSO
+        # Cookies to send with SSO request (copy from browser/Burp)
+        self.sso_cookies = "AUTH_SESSION=abc123; OTHER_COOKIE=xyz"
+
+        # Step 2 — Token endpoint (uses JSESSIONID → gives JWT)
+        self.token_url    = "https://your-app.com/test/token"
+        self.token_method = "POST"
+        self.token_body   = ""     # body if needed, else leave empty
+        # Key name of JWT in JSON response e.g. "token", "access_token", "jwt"
+        self.jwt_key      = "access_token"
+
+        # ================================================================
+        self._jsessionid  = None
+        self._jwt_token   = None
+        self._jwt_expiry  = 0
+
+        self._stdout.println("[+] SSO → JSESSIONID → JWT Refresher loaded!")
+
+    # ------------------------------------------------------------------ #
+    def getActionName(self):
+        return "SSO → JSESSIONID → JWT Auto Refresher"
+
+    # ------------------------------------------------------------------ #
+    def performAction(self, currentRequest, macroItems):
+        try:
+            # Check JWT validity first
+            if not self._is_jwt_valid():
+                self._stdout.println("[*] JWT expired or missing...")
+
+                # Check if JSESSIONID is still valid
+                if not self._is_jsessionid_valid():
+                    self._stdout.println("[*] JSESSIONID expired — Starting SSO flow...")
+
+                    # Step 1a: Hit SSO → get Location URL
+                    location_url = self._get_sso_location()
+                    if not location_url:
+                        self._stderr.println("[-] Failed to get Location URL from SSO")
+                        return
+                    self._stdout.println("[+] Location URL obtained: " + location_url[:60] + "...")
+
+                    # Step 1b: Follow Location URL → get JSESSIONID
+                    self._fetch_jsessionid(location_url)
+                    if not self._jsessionid:
+                        self._stderr.println("[-] Failed to extract JSESSIONID")
+                        return
+                    self._stdout.println("[+] JSESSIONID obtained: " + self._jsessionid[:15] + "...")
+
+                # Step 2: Use JSESSIONID → get JWT
+                self._fetch_jwt()
+                if not self._jwt_token:
+                    self._stderr.println("[-] Failed to obtain JWT token")
+                    return
+                self._stdout.println("[+] JWT obtained successfully")
+
+            # Step 3: Inject JWT into current request
+            self._inject_jwt(currentRequest)
+
+        except Exception as e:
+            self._stderr.println("[-] performAction error: " + str(e))
+
+    # ================================================================
+    # STEP 1a — SSO Request → Extract Location URL
+    # ================================================================
+    def _get_sso_location(self):
+        try:
+            headers = [
+                self.sso_method + " " + self._path(self.sso_url) + " HTTP/1.1",
+                "Host: " + self._host(self.sso_url),
+                "Cookie: " + self.sso_cookies,
+                "Connection: close"
+            ]
+
+            response_bytes = self._make_request(self.sso_url, headers, None)
+            if response_bytes is None:
+                return None
+
+            resp_info = self._helpers.analyzeResponse(response_bytes)
+            status    = resp_info.getStatusCode()
+            headers_list = resp_info.getHeaders()
+
+            self._stdout.println("[*] SSO response status: " + str(status))
+
+            # Look for Location header in 302 redirect
+            if status in [301, 302, 303, 307, 308]:
+                for hdr in headers_list:
+                    if hdr.lower().startswith("location:"):
+                        location = hdr.split(":", 1)[1].strip()
+                        self._stdout.println("[+] Found Location: " + location[:80])
+                        return location
+
+            # Sometimes SSO returns 200 with redirect URL in body
+            body_offset = resp_info.getBodyOffset()
+            body = self._helpers.bytesToString(response_bytes[body_offset:])
+            # Try extracting from body if no Location header
+            match = re.search(r'href=["\']([^"\']*session_state[^"\']*)["\']', body)
+            if match:
+                return match.group(1)
+
+            self._stderr.println("[-] No Location URL found. Status: " + str(status))
+            return None
+
+        except Exception as e:
+            self._stderr.println("[-] _get_sso_location error: " + str(e))
+            return None
+
+    # ================================================================
+    # STEP 1b — Follow Location URL → Extract JSESSIONID
+    # ================================================================
+    def _fetch_jsessionid(self, location_url):
+        try:
+            # Handle relative URLs
+            if location_url.startswith("/"):
+                location_url = self._scheme(self.sso_url) + "://" + self._host(self.sso_url) + location_url
+
+            self._stdout.println("[*] Following Location URL: " + location_url[:80])
+
+            headers = [
+                "GET " + self._path_with_query(location_url) + " HTTP/1.1",
+                "Host: " + self._host(location_url),
+                "Cookie: " + self.sso_cookies,   # send original cookies too
+                "Connection: close"
+            ]
+
+            response_bytes = self._make_request(location_url, headers, None)
+            if response_bytes is None:
+                return
+
+            resp_info    = self._helpers.analyzeResponse(response_bytes)
+            resp_headers = resp_info.getHeaders()
+
+            self._stdout.println("[*] Location URL response status: " + str(resp_info.getStatusCode()))
+
+            # Extract JSESSIONID from Set-Cookie
+            for hdr in resp_headers:
+                if hdr.lower().startswith("set-cookie") and "JSESSIONID" in hdr.upper():
+                    match = re.search(r'JSESSIONID=([^;,\s]+)', hdr, re.IGNORECASE)
+                    if match:
+                        self._jsessionid = match.group(1)
+                        self._stdout.println("[+] Extracted JSESSIONID: " + self._jsessionid[:15] + "...")
+                        return
+
+            # If JSESSIONID is in a 2nd redirect, follow it
+            status = resp_info.getStatusCode()
+            if status in [301, 302, 303, 307]:
+                for hdr in resp_headers:
+                    if hdr.lower().startswith("location:"):
+                        next_url = hdr.split(":", 1)[1].strip()
+                        self._stdout.println("[*] Following 2nd redirect: " + next_url[:60])
+                        self._fetch_jsessionid(next_url)  # recursive follow
+                        return
+
+            self._stderr.println("[-] JSESSIONID not found in Set-Cookie headers")
+
+        except Exception as e:
+            self._stderr.println("[-] _fetch_jsessionid error: " + str(e))
+
+    # ================================================================
+    # STEP 2 — Use JSESSIONID → Generate JWT
+    # ================================================================
+    def _fetch_jwt(self):
+        try:
+            body_str = self.token_body if self.token_body else ""
+
+            headers = [
+                self.token_method + " " + self._path(self.token_url) + " HTTP/1.1",
+                "Host: " + self._host(self.token_url),
+                "Cookie: JSESSIONID=" + self._jsessionid,
+                "Content-Type: application/json",
+                "Content-Length: " + str(len(body_str)),
+                "Connection: close"
+            ]
+
+            response_bytes = self._make_request(self.token_url, headers, body_str if body_str else None)
+            if response_bytes is None:
+                return
+
+            resp_info   = self._helpers.analyzeResponse(response_bytes)
+            body_offset = resp_info.getBodyOffset()
+            resp_body   = self._helpers.bytesToString(response_bytes[body_offset:])
+            status      = resp_info.getStatusCode()
+
+            self._stdout.println("[*] Token endpoint status: " + str(status))
+
+            # Parse JWT from JSON response
+            try:
+                data = json.loads(resp_body)
+                token = (data.get(self.jwt_key) or
+                         data.get("token")       or
+                         data.get("access_token") or
+                         data.get("jwt")          or
+                         data.get("id_token"))
+                if token:
+                    self._jwt_token  = token
+                    self._jwt_expiry = self._parse_jwt_expiry(token)
+                    return
+            except:
+                pass
+
+            # Fallback: regex find JWT pattern in response
+            match = re.search(r'(eyJ[A-Za-z0-9_\-]+\.[A-Za-z0-9_\-]+\.[A-Za-z0-9_\-]+)', resp_body)
+            if match:
+                self._jwt_token  = match.group(1)
+                self._jwt_expiry = self._parse_jwt_expiry(self._jwt_token)
+                self._stdout.println("[+] JWT extracted via regex")
+            else:
+                self._stderr.println("[-] JWT not found in token response: " + resp_body[:200])
+
+        except Exception as e:
+            self._stderr.println("[-] _fetch_jwt error: " + str(e))
+
+    # ================================================================
+    # STEP 3 — Inject JWT into outgoing request
+    # ================================================================
+    def _inject_jwt(self, currentRequest):
+        try:
+            req_info    = self._helpers.analyzeRequest(currentRequest.getRequest())
+            headers     = list(req_info.getHeaders())
+            body        = currentRequest.getRequest()[req_info.getBodyOffset():]
+            new_headers = []
+            replaced    = False
+
+            for hdr in headers:
+                if hdr.lower().startswith("authorization:"):
+                    new_headers.append("Authorization: Bearer " + self._jwt_token)
+                    replaced = True
+                else:
+                    new_headers.append(hdr)
+
+            if not replaced:
+                new_headers.append("Authorization: Bearer " + self._jwt_token)
+
+            new_request = self._helpers.buildHttpMessage(new_headers, body)
+            currentRequest.setRequest(new_request)
+            self._stdout.println("[+] JWT injected into request")
+
+        except Exception as e:
+            self._stderr.println("[-] _inject_jwt error: " + str(e))
+
+    # ================================================================
+    # VALIDITY CHECKS
+    # ================================================================
+    def _is_jwt_valid(self):
+        if not self._jwt_token:
+            return False
+        # If we parsed expiry, use it (refresh 30s early)
+        if self._jwt_expiry > 0:
+            return time.time() < (self._jwt_expiry - 30)
+        return False
+
+    def _is_jsessionid_valid(self):
+        """
+        Probe the token endpoint with current JSESSIONID.
+        If it returns 401/403, JSESSIONID is dead.
+        """
+        if not self._jsessionid:
+            return False
+        try:
+            headers = [
+                "GET " + self._path(self.token_url) + " HTTP/1.1",
+                "Host: " + self._host(self.token_url),
+                "Cookie: JSESSIONID=" + self._jsessionid,
+                "Connection: close"
+            ]
+            response_bytes = self._make_request(self.token_url, headers, None)
+            if response_bytes is None:
+                return False
+            status = self._helpers.analyzeResponse(response_bytes).getStatusCode()
+            return status not in [401, 403]
+        except:
+            return False
+
+    # ================================================================
+    # UTILITY HELPERS
+    # ================================================================
+    def _parse_jwt_expiry(self, token):
+        try:
+            parts = token.split('.')
+            if len(parts) != 3:
+                return 0
+            payload_b64 = parts[1]
+            padding     = 4 - len(payload_b64) % 4
+            payload_b64 += '=' * padding
+
+            from javax.xml.bind import DatatypeConverter
+            decoded = DatatypeConverter.parseBase64Binary(payload_b64)
+            payload = json.loads(''.join([chr(b & 0xff) for b in decoded]))
+            exp     = payload.get('exp', 0)
+            self._stdout.println("[*] JWT expires at: " + str(exp) + " | now: " + str(int(time.time())))
+            return exp
+        except Exception as e:
+            self._stderr.println("[-] JWT parse error: " + str(e))
+            return 0
+
+    def _make_request(self, url, headers, body):
+        try:
+            use_https  = url.lower().startswith("https")
+            host       = self._host(url)
+            port       = 443 if use_https else 80
+            http_svc   = self._helpers.buildHttpService(host, port, use_https)
+            body_bytes = self._helpers.stringToBytes(body) if body else []
+            req_bytes  = self._helpers.buildHttpMessage(headers, body_bytes)
+            response   = self._callbacks.makeHttpRequest(http_svc, req_bytes)
+            return response.getResponse() if response else None
+        except Exception as e:
+            self._stderr.println("[-] _make_request error: " + str(e))
+            return None
+
+    def _host(self, url):
+        no_scheme = url.replace("https://","").replace("http://","")
+        return no_scheme.split("/")[0].split("?")[0]
+
+    def _scheme(self, url):
+        return "https" if url.lower().startswith("https") else "http"
+
+    def _path(self, url):
+        no_scheme = url.replace("https://","").replace("http://","")
+        parts     = no_scheme.split("/", 1)
+        return "/" + parts[1] if len(parts) > 1 else "/"
+
+    def _path_with_query(self, url):
+        no_scheme = url.replace("https://","").replace("http://","")
+        parts     = no_scheme.split("/", 1)
+        return "/" + parts[1] if len(parts) > 1 else "/"
