@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-from burp import IBurpExtender, ISessionHandlingAction, IHttpListener
+from burp import IBurpExtender, IHttpListener
 from java.io import PrintWriter
 import json
 import re
@@ -18,9 +18,16 @@ class BurpExtender(IBurpExtender, IHttpListener):
         # =====================================================
         # CONFIGURE THESE VALUES ONLY
         # =====================================================
-        self.sso_url     = "https://sso.com/url"
-        self.sso_cookies = "SGX_tid=YOUR_VALUE; sgx-11=YOUR_VALUE"
-        self.token_url   = "https://host.com/explore-wa/token"
+
+        # Full SSO URL with query params
+        self.sso_url = "https://sso.com/sgconnect/oauth2/authorize?scope=openid%20profile&response_type=code&redirect_uri=https://host.com/explorer-wa/&nonce=MTc4MDk4MTM1MTY50A%3D%3D&client_id=XXXXXXXXXXXXXXXX"
+
+        # SSO cookies - update these daily
+        self.sso_cookies = "SGX_tid=XXXXXXXXXXXXXXXXXXXXXXXX; sgx-11=XXXXXXXXXXXXXXXX; OAUTH_REQUEST_ATTRIBUTES=XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX; SGX_PRD_authN_sticky_id=XXXXXXXXXXXXXXXXXXXXXXXXXXXXXX; amlbcookie=01; 12=XXXXXXXXXXXX"
+
+        # Token endpoint
+        self.token_url = "https://host.com/explore-wa/token"
+
         # =====================================================
 
         self._jsessionid = None
@@ -71,14 +78,30 @@ class BurpExtender(IBurpExtender, IHttpListener):
         except Exception as e:
             self._stderr.println("processHttpMessage error: " + str(e))
 
+    # ----------------------------------------------------------
+    # STEP 1 - GET SSO URL - extract Location header
+    # ----------------------------------------------------------
     def _get_sso_location(self):
         try:
             host = self._host(self.sso_url)
             path = self._path_with_query(self.sso_url)
 
+            # Exact headers from your curl request
             headers = [
                 "GET " + path + " HTTP/1.1",
                 "Host: " + host,
+                "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:151.0) Gecko/20100101 Firefox/151.0",
+                "Accept: text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+                "Accept-Language: en-US,en;q=0.9",
+                "Accept-Encoding: gzip, deflate, br",
+                "Referer: https://sso.com/",
+                "Upgrade-Insecure-Requests: 1",
+                "Sec-Fetch-Dest: document",
+                "Sec-Fetch-Mode: navigate",
+                "Sec-Fetch-Site: same-origin",
+                "Sec-Fetch-User: ?1",
+                "Priority: u=0, i",
+                "Te: trailers",
                 "Cookie: " + self.sso_cookies,
                 "Connection: close"
             ]
@@ -98,7 +121,7 @@ class BurpExtender(IBurpExtender, IHttpListener):
                 for hdr in resp_headers:
                     if hdr.lower().startswith("location:"):
                         location = hdr.split(":", 1)[1].strip()
-                        self._stdout.println("Location URL found")
+                        self._stdout.println("Location URL found: " + location[:80])
                         return location
 
             self._stderr.println("No Location header found in SSO response. Status: " + str(status))
@@ -108,6 +131,9 @@ class BurpExtender(IBurpExtender, IHttpListener):
             self._stderr.println("_get_sso_location error: " + str(e))
             return None
 
+    # ----------------------------------------------------------
+    # STEP 2 - Follow Location URL - extract JSESSIONID
+    # ----------------------------------------------------------
     def _fetch_jsessionid(self, location_url):
         try:
             if location_url.startswith("/"):
@@ -119,6 +145,14 @@ class BurpExtender(IBurpExtender, IHttpListener):
             headers = [
                 "GET " + path + " HTTP/1.1",
                 "Host: " + host,
+                "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:151.0) Gecko/20100101 Firefox/151.0",
+                "Accept: text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+                "Accept-Language: en-US,en;q=0.9",
+                "Accept-Encoding: gzip, deflate, br",
+                "Referer: https://sso.com/",
+                "Sec-Fetch-Dest: document",
+                "Sec-Fetch-Mode: navigate",
+                "Sec-Fetch-Site: cross-site",
                 "Cookie: " + self.sso_cookies,
                 "Connection: close"
             ]
@@ -152,6 +186,9 @@ class BurpExtender(IBurpExtender, IHttpListener):
             self._stderr.println("_fetch_jsessionid error: " + str(e))
             return None
 
+    # ----------------------------------------------------------
+    # STEP 3 - GET token endpoint with JSESSIONID - extract JWT
+    # ----------------------------------------------------------
     def _fetch_jwt(self):
         try:
             host = self._host(self.token_url)
@@ -160,6 +197,9 @@ class BurpExtender(IBurpExtender, IHttpListener):
             headers = [
                 "GET " + path + " HTTP/1.1",
                 "Host: " + host,
+                "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:151.0) Gecko/20100101 Firefox/151.0",
+                "Accept: application/json, text/plain, */*",
+                "Accept-Language: en-US,en;q=0.9",
                 "Cookie: JSESSIONID=" + self._jsessionid,
                 "Connection: close"
             ]
@@ -204,6 +244,9 @@ class BurpExtender(IBurpExtender, IHttpListener):
             self._stderr.println("_fetch_jwt error: " + str(e))
             return None
 
+    # ----------------------------------------------------------
+    # STEP 4 - Retry original request with new JWT injected
+    # ----------------------------------------------------------
     def _retry_with_new_jwt(self, messageInfo):
         try:
             original_request = messageInfo.getRequest()
@@ -238,6 +281,9 @@ class BurpExtender(IBurpExtender, IHttpListener):
         except Exception as e:
             self._stderr.println("_retry_with_new_jwt error: " + str(e))
 
+    # ----------------------------------------------------------
+    # UTILITY HELPERS
+    # ----------------------------------------------------------
     def _make_request(self, url, headers, body):
         try:
             use_https  = url.lower().startswith("https")
