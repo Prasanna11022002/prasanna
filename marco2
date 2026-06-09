@@ -19,7 +19,7 @@ class BurpExtender(IBurpExtender, IHttpListener):
         # CONFIGURE THESE VALUES ONLY
         # =====================================================
 
-        # Full SSO URL with query params
+        # Full SSO URL with query params - paste exact URL here
         self.sso_url = "https://sso.com/sgconnect/oauth2/authorize?scope=openid%20profile&response_type=code&redirect_uri=https://host.com/explorer-wa/&nonce=MTc4MDk4MTM1MTY50A%3D%3D&client_id=XXXXXXXXXXXXXXXX"
 
         # SSO cookies - update these daily
@@ -84,9 +84,10 @@ class BurpExtender(IBurpExtender, IHttpListener):
     def _get_sso_location(self):
         try:
             host = self._host(self.sso_url)
-            path = self._path_with_query(self.sso_url)
+            path = self._extract_path(self.sso_url)
 
-            # Exact headers from your curl request
+            self._stdout.println("SSO path being sent: " + path[:100])
+
             headers = [
                 "GET " + path + " HTTP/1.1",
                 "Host: " + host,
@@ -124,7 +125,7 @@ class BurpExtender(IBurpExtender, IHttpListener):
                         self._stdout.println("Location URL found: " + location[:80])
                         return location
 
-            self._stderr.println("No Location header found in SSO response. Status: " + str(status))
+            self._stderr.println("No Location header found. Status: " + str(status))
             return None
 
         except Exception as e:
@@ -140,7 +141,9 @@ class BurpExtender(IBurpExtender, IHttpListener):
                 location_url = self._scheme(self.sso_url) + "://" + self._host(self.sso_url) + location_url
 
             host = self._host(location_url)
-            path = self._path_with_query(location_url)
+            path = self._extract_path(location_url)
+
+            self._stdout.println("Following Location path: " + path[:100])
 
             headers = [
                 "GET " + path + " HTTP/1.1",
@@ -192,7 +195,7 @@ class BurpExtender(IBurpExtender, IHttpListener):
     def _fetch_jwt(self):
         try:
             host = self._host(self.token_url)
-            path = self._path_with_query(self.token_url)
+            path = self._extract_path(self.token_url)
 
             headers = [
                 "GET " + path + " HTTP/1.1",
@@ -299,13 +302,18 @@ class BurpExtender(IBurpExtender, IHttpListener):
             return None
 
     def _host(self, url):
-        no_scheme = url.replace("https://", "").replace("http://", "")
+        # Strip only leading scheme to get host
+        no_scheme = re.sub(r'^https?://', '', url)
         return no_scheme.split("/")[0].split("?")[0]
 
     def _scheme(self, url):
         return "https" if url.lower().startswith("https") else "http"
 
-    def _path_with_query(self, url):
-        no_scheme = url.replace("https://", "").replace("http://", "")
-        parts     = no_scheme.split("/", 1)
-        return "/" + parts[1] if len(parts) > 1 else "/"
+    def _extract_path(self, url):
+        # Only strip the scheme and host from the START
+        # Preserves https:// inside query parameters like redirect_uri
+        match = re.match(r'^https?://[^/]+(.*)', url)
+        if match:
+            path = match.group(1)
+            return path if path else "/"
+        return "/"
