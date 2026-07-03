@@ -28,4 +28,4 @@
 
 
 
-The Apache Axis2 Administration Console (/axis2/axis2-admin/) is a web-based management interface used to administer Apache Axis2 web services. It enables administrators to perform tasks such as deploying and managing services, configuring modules, and monitoring the Axis2 server. If the console is improperly secured or accessible to unauthorized users, its administrative features, such as the Service Upload functionality, can be abused to deploy malicious service archives (.aar files), potentially leading to Remote Code Execution.
+It was observed that the Apache Axis2 Administration Console (/axis2/axis2-admin/) was accessible. After successfully authenticating to the administrative interface, a malicious LabService2.aar file was uploaded using the Service Upload functionality. The uploaded service was successfully deployed and subsequently invoked to execute operating system commands on the target server.
