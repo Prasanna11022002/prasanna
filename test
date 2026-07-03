@@ -1,27 +1,3 @@
-The application is exposing an Apache Solr administration interface at http://host:8983/solr/. The Solr admin UI and API are accessible without authentication from the network, which discloses internal Solr information (cores, schemas, configurations, and indexed documents metadata). In an unsecured state, the Solr endpoint can be abused to read or modify indexed data, download configuration files, and in some deployments enable additional attack paths that lead to remote code execution or full data compromise.
-
-
-impact
-Attackers can enumerate cores, view schema/configuration details, and discover internal data structures or sensitive field names.
-
-recommedation:
-Configure Solr authentication and role-based authorization so only authorized accounts can access admin and core APIs.
-
-The Apache Solr Admin Interface Exposure vulnerability occurs when the Solr administrative panel (/solr/) or its API endpoints are accessible over the network without proper authentication or access control. This exposure allows unauthorized users to view configuration details, schemas, core information, and potentially sensitive indexed data. In some cases, attackers can also modify configurations or exploit additional Solr features to execute arbitrary commands on the server.
-
-"query": "SELECT U.USER_NAME, E.EVENT_TYPE_NAME, E.START_TIMESTAMP AS SESSION_START, E.END_TIMESTAMP AS SESSION_END, E.CLIENT_HOST_NAME, E.CLIENT_IP_ADDRESS, E.AUTHENTICATION_TYPE, E.SESSION_ID FROM ADS_EVENT E JOIN ADS_USER U ON E.USER_ID = U.USER_ID WHERE E.EVENT_TYPE_ID IN (1001,1002) ORDER BY E.START_TIMESTAMP DESC"
-
-"query": "SELECT U.USER_NAME, U.USER_FULL_NAME, E.EVENT_TYPE_NAME, E.START_TIMESTAMP AS SESSION_START, E.END_TIMESTAMP AS SESSION_END, E.CLIENT_HOST_NAME, E.CLIENT_IP_ADDRESS, E.AUTHENTICATION_TYPE AS AUTH_TYPE, E.SUCCESS_FLAG, E.SESSION_ID FROM ADS_EVENT E JOIN ADS_USER U ON E.USER_ID = U.USER_ID WHERE E.EVENT_TYPE_ID IN (1001,1002,1003) ORDER BY E.START_TIMESTAMP DESC"
-
-"query": "SELECT U.USER_NAME, U.USER_FULL_NAME, E.EVENT_TYPE_NAME, E.START_TIMESTAMP AS SESSION_START, E.END_TIMESTAMP AS SESSION_END, DATEDIFF(SECOND, E.START_TIMESTAMP, E.END_TIMESTAMP) AS SESSION_DURATION_SEC, E.CLIENT_HOST_NAME, E.CLIENT_IP_ADDRESS, E.AUTHENTICATION_TYPE AS AUTH_TYPE, E.SUCCESS_FLAG, E.SESSION_ID FROM ADS_EVENT E JOIN ADS_USER U ON E.USER_ID = U.USER_ID WHERE E.EVENT_TYPE_ID IN (1001,1002,1003) ORDER BY E.START_TIMESTAMP DESC"
-
-
-The application does not invalidate user sessions after logout and does not enforce a session timeout. Active sessions remain valid and can be reused to access the application without re-authentication, increasing the risk of unauthorized access.
-Invalidate the user session immediately upon logout.
-
-Implement a session timeout to automatically expire inactive sessions.
-
-
 
 <!DOCTYPE html>
 <html lang="en-US">
@@ -48,3 +24,8 @@ Implement a session timeout to automatically expire inactive sessions.
   </script>
 </body>
 </html>
+
+
+
+
+The Apache Axis2 Administration Console (/axis2/axis2-admin/) is a web-based management interface used to administer Apache Axis2 web services. It enables administrators to perform tasks such as deploying and managing services, configuring modules, and monitoring the Axis2 server. If the console is improperly secured or accessible to unauthorized users, its administrative features, such as the Service Upload functionality, can be abused to deploy malicious service archives (.aar files), potentially leading to Remote Code Execution.
