@@ -27,35 +27,11 @@
 
 
 
-
-
-It was observed that the application provides a user profile update feature. Once a user's profile is modified, the updated account is not permitted to log in until the changes are reviewed and approved by a superior user. During testing, when the user attempted to access the application after updating their profile, the UI displayed the message "User record is not authorized." However, despite the user being unauthorized, the application still generated a valid JWT. By using this JWT, the user was able to successfully access the backend APIs and perform both read and write operations. This indicates that the backend APIs failed to enforce proper authorization checks based on the user's current account status, resulting in a Broken Access Control vulnerability.
-
-It was observed that a low-privileged user was able to access resources belonging to higher-privileged users by modifying the queryId and tableId parameters in HTTP requests. By manipulating these parameters, the user was able to successfully perform read operations on data belonging to higher-privileged users
-
-it was observed that the application was vulnerable to Broken Access Control under the following scenarios:
-
-this vulnerability could allow unauthorized users to access restricted resources and perform unauthorized operations. This may lead to exposure of sensitive data, unauthorized modification of application records, and potential privilege escalation.
-
-Enforce server-side authorization checks for every request to ensure users can only access resources and perform actions permitted by their assigned roles and privileges.
-Validate the user's current account status before issuing or accepting JWTs, and prevent token generation for users who are inactive, pending approval, or otherwise unauthorized.
-Invalidate or revoke existing JWTs when a user's account status or privileges change (e.g., after a profile update requiring approval).
-
-TITLE: SELF-AUTHORIZATION BYPASS
-
-Description of Vulnerability:
-Business logic vulnerabilities are flaws in the design and implementation of an application that allow an attacker to manipulate legitimate functionality to achieve a malicious goal. Instead of exploiting technical flaws, attackers abuse the normal workflow and business rules of the application. This occurs when an application relies on user-controlled input to dictate critical workflow states, allowing users to bypass intended restrictions, approval processes, or segregation of duties.
-
-Observation:
-It was observed that the application enforces an approval workflow for user profile modifications. When a standard user edits and commits a change to their profile, their account enters a locked state until a superior reviews and approves the update. However, the application fails to securely enforce this workflow on the server side. 
-
-During the profile update commit process, the request contains a parameter named operationid, which is assigned the default value of "PROCESS". By modifying the value of this parameter from "PROCESS" to "AUTHORISE", the application incorrectly allows the requesting user to authorize their own profile modification. As a result, the profile update is instantly approved and applied, completely bypassing the superior review mechanism and preventing the user account from being locked.
-
-Risk / Potential Impact:
-An attacker can bypass the segregation of duties and peer-review mechanisms entirely, allowing them to make unauthorized changes to their own profile without administrative oversight. This could allow an attacker to immediately change critical information to facilitate account takeover or fraud. Furthermore, bypassing the account lock mechanism ensures the attacker maintains uninterrupted access to the application while making these changes, preventing any temporary suspension that might otherwise alert administrators to suspicious activity.
-
-Remediation Steps:
-. Do not rely on client-side parameters like operationid to determine the state or action of a transaction. 
-. Implement robust segregation of duties. Ensure that the user who initiates a profile update (the "PROCESS" action) cannot be the same user who approves it (the "AUTHORISE" action).
-. Validate the user's role and privileges on the server side before executing an "AUTHORISE" request, ensuring the requesting user actually holds a superior or administrative role.
-. Implement a secure server-side state machine for profile updates that strictly follows the intended sequence (e.g., Pending Submission -> Pending Review -> Approved) without allowing state-skipping.
+1. Log in to the application using the **Dhanavel** user account and navigate to the **Edit User Details** functionality.
+2. Modify the user's profile details and save the changes.
+3. Capture the HTTP request associated with the **Edit User Details** functionality and observe that the profile is updated successfully.
+4. After the profile update, attempt to log in again. Observe that the application displays a **"User record not authorized"** message, indicating that the record requires approval from a superior user before it can be used.
+5. Despite the user record being in an unauthorized state, observe that the application still generates a valid JWT token upon authentication.
+6. Use the previously captured HTTP request from the Edit User Details functionality and modify the operationalID parameter value from process to authorize.
+7. Submit the modified request and observe that the **Dhanavel** user is able to authorize their own record successfully.
+8. Log in to the application again and observe that the user is able to access the application successfully after self-authorizing the record.
