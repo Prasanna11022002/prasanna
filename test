@@ -27,11 +27,10 @@
 
 
 
-1. Log in to the application using the **Dhanavel** user account and navigate to the **Edit User Details** functionality.
-2. Modify the user's profile details and save the changes.
-3. Capture the HTTP request associated with the **Edit User Details** functionality and observe that the profile is updated successfully.
-4. After the profile update, attempt to log in again. Observe that the application displays a **"User record not authorized"** message, indicating that the record requires approval from a superior user before it can be used.
-5. Despite the user record being in an unauthorized state, observe that the application still generates a valid JWT token upon authentication.
-6. Use the previously captured HTTP request from the Edit User Details functionality and modify the operationalID parameter value from process to authorize.
-7. Submit the modified request and observe that the **Dhanavel** user is able to authorize their own record successfully.
-8. Log in to the application again and observe that the user is able to access the application successfully after self-authorizing the record.
+It was observed that the application provides a Create New User functionality. When a new user is created, the account is initially placed in an Invited state and is intended to be activated only through an activation link sent to the user's registered email address. However, by modifying the isActive parameter from false to true and assigning a password through the password parameter, a user can activate the invited account and authenticate to it without using the intended email-based activation link.
+
+A user with access to the user-management functionality can bypass the intended email-based account activation mechanism and directly activate invited user accounts.
+
+Enforce the account activation workflow entirely on the server side and do not rely on client-controlled parameters such as isActive.
+Prevent users from directly changing the activation state of an invited account through the standard edit-user functionality unless this action is explicitly authorized and required by the business workflow.
+Do not allow the password parameter to be arbitrarily assigned or modified for an account that has not completed the required activation process.
