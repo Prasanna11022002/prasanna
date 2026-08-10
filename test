@@ -40,3 +40,8 @@ Implement strict server-side authorization checks before allowing a user's passw
 Ensure that users cannot change another user's password through the standard Edit User functionality unless explicitly authorized to perform this action.
 Use a dedicated, secure password-reset workflow for administrative password changes.
 Do not rely on client-controlled parameters such as password to determine whether a password change is permitted.
+
+Account Takeover (ATO) is a security vulnerability where an unauthorized individual gains control over another user's account.
+It occurs when an attacker bypasses or abuses authentication or account-management mechanisms.
+The attacker may gain access by changing credentials, stealing sessions, or exploiting access control flaws.
+Successful exploitation can result in unauthorized access to the user's data and account functionality.
