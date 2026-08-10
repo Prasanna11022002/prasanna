@@ -27,14 +27,6 @@
 
 
 
-It was observed that the application allows a low-privileged internal user to access the Edit User functionality. However, by modifying the assignedRoleNames parameter to admin in the HTTP request, the low-privileged user can successfully escalate the account's privileges to an administrative role. After the role is updated, the escalated user can access administrative functionality and perform read and write operations that were not available with their original privileges.
+It was observed that the application restricts the modification of certain product parameters, including Product Code, Society Code, Customer Category, and Commercial Product, through the user interface after a product has been created. However, these restrictions are enforced only on the client side. By intercepting and modifying the HTTP request, a user can modify the values of these restricted parameters. The application accepts and processes the modified values without performing adequate server-side validation, allowing users to modify product parameters that are intended to be non-editable.
 
-A low-privileged user can escalate their privileges to an administrative level and perform unauthorized read and write operations on the application.
-
-Implement strict server-side authorization checks for all role assignment and modification operations.
-Do not trust client-controlled parameters such as assignedRoleNames to determine a user's privileges.
-Restrict role assignment and modification to appropriately authorized administrators.
-Prevent low-privileged users from assigning privileged roles such as admin to themselves or other users.
-Implement a robust Role-Based Access Control (RBAC) model with clearly defined permissions for each role.
-
-Privilege Escalation is a security vulnerability that occurs when a user gains access to permissions or functionality beyond those authorized for their assigned role. This can allow a low-privileged user to obtain higher-level privileges, such as administrative access, and perform unauthorized actions within the application.
+Validate submitted values against the application's business rules before updating the database.
